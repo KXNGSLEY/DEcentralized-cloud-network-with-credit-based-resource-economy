@@ -497,7 +497,7 @@ def run_coord_server():
   ╚══════╝ ╚═════╝ ╚═╝     ╚══════╝╚═╝   ╚═╝ ╚═╝  ╚═══╝╚══════╝   ╚═╝   
 
                        ══► SUPER𝙉𝙀𝙏 v1.0 - Coordinator + Host ◄══                 
-                            ░░░ CREATED BY NONSKING2215 ░░░                            
+                            ░░░ CREATED BY KXNGSLEY ░░░                            
     """)
 
     logger.info("Routes: POST /submit -> returns job_id, POST /stop/{job_id}, GET /status/{job_id}, ws /ws/logs/{job_id}, GET /hosts, GET /get_job/{host_id}, POST /job_done/{job_id}")
