@@ -4,7 +4,7 @@ u can help if u like
 # How to use
 ## INSTRUCTIONS ON HOW TO USE 
 ## to Run the software(and initiate your system as the supernode)
-python supernet_server.py
+python SUPER𝙉𝙀𝙏_V1.0
 
 ## to get hosts (nodes)
 curl "http://YOUR_SERVER_IP:9000/hosts"
