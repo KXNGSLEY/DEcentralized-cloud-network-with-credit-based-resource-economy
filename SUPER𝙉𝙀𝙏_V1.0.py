@@ -139,19 +139,33 @@ init_supernode()
 # -----------------
 @app.post("/register_host")
 def register_host(host: HostInfo):
-    if host.host not in registered_hosts:
-        registered_hosts.append(host.host)
-        host_data[host.host] = {
+    """
+    Register or refresh a host. Any hostname sent here will be accepted.
+    If the host already exists we refresh its last_ping so it's immediately active.
+    """
+    name = host.host.strip()
+    if not name:
+        return {"error": "Empty host name"}
+
+    # register new host or refresh existing host's last_ping
+    if name not in host_data:
+        registered_hosts.append(name)
+        host_data[name] = {
             "credits": SUPER_CREDIT_START,
             "last_ping": datetime.utcnow(),
             "total_uptime_seconds": 0
         }
-        _ensure_host_queue(host.host)
-        logger.info(f"Registered new host: {host.host} with {SUPER_CREDIT_START} SuperCredits.")
+        _ensure_host_queue(name)
+        logger.info(f"Registered host: {name} with {SUPER_CREDIT_START} SuperCredits.")
+    else:
+        # refresh last_ping so newly-registered/returned hosts are immediately active
+        host_data[name]["last_ping"] = datetime.utcnow()
+        logger.info(f"Refreshed host registration: {name} (marked active).")
+
     return {
-        "message": f"Host {host.host} registered successfully.",
+        "message": f"Host {name} registered successfully.",
         "hosts": registered_hosts,
-        "credits": host_data[host.host]["credits"]
+        "credits": host_data[name]["credits"]
     }
 
 @app.get("/hosts")
@@ -255,28 +269,38 @@ def job_done(job_id: str, payload: JobDone):
 @app.post("/submit")
 async def submit_code(payload: CodeInput):
     """
-    Submits a job. If payload.host is empty the coordinator will choose a random active host.
-    Non-host users can submit jobs (they are charged). If they run out of credits they must
-    become a host to earn more.
+    Submits a job. Behavior:
+    - If payload.host is provided and that host is active -> use it.
+    - Otherwise pick randomly among currently connected active non-supernode hosts.
+    - If no non-supernode hosts are active, use SUPERNODE_NAME.
+    - New users get USER_START_CREDITS (already preserved).
     """
-    # Choose or validate a user_id
     user_id = payload.user_id.strip() if payload.user_id else "anonymous"
     if user_id not in user_data:
         user_data[user_id] = {"credits": USER_START_CREDITS}
         logger.info(f"Created user account '{user_id}' with {USER_START_CREDITS} starting credits.")
 
-    # Pick host if not provided
-    chosen_host = payload.host.strip() if payload.host else ""
-    if not chosen_host:
-        # Build list of active hosts (include supernode)
-        active_hosts = [h for h in registered_hosts if _is_host_active(h) or h == SUPERNODE_NAME]
-        if not active_hosts:
-            return {"error": "No active hosts available at the moment"}
-        chosen_host = random.choice(active_hosts)
-        logger.info(f"No host specified — randomly selected host '{chosen_host}' for job submission.")
+    # build active non-supernode hosts list from host_data
+    active_non_supernode = [
+        h for h, info in host_data.items()
+        if h != SUPERNODE_NAME and _is_host_active(h)
+    ]
 
-    if chosen_host not in host_data:
-        return {"error": "Invalid host"}
+    # determine chosen host
+    specified = payload.host.strip() if payload.host else None
+    if specified:
+        # if user explicitly chose supernode, allow that explicitly
+        if specified == SUPERNODE_NAME:
+            chosen_host = SUPERNODE_NAME
+        elif specified in host_data and _is_host_active(specified):
+            chosen_host = specified
+        else:
+            # explicit host not active / not known -> fall back to automatic selection
+            chosen_host = random.choice(active_non_supernode) if active_non_supernode else SUPERNODE_NAME
+    else:
+        chosen_host = random.choice(active_non_supernode) if active_non_supernode else SUPERNODE_NAME
+
+    logger.info(f"Job submission: user={user_id} chosen_host={chosen_host} (active_hosts={len(active_non_supernode)})")
 
     # compute cost and overage
     overage = False
@@ -289,17 +313,28 @@ async def submit_code(payload: CodeInput):
     if user_data[user_id]["credits"] < cost:
         return {"error": "User does not have enough SuperCredits. Become a host to earn credits or top up."}
 
-    # Deduct from user, credit to host
+    # Deduct from user, credit to host (ensure host_data entry exists for chosen_host)
     user_data[user_id]["credits"] -= cost
+    if chosen_host not in host_data:
+        # should not normally happen because supernode is always present; defensive init
+        host_data[chosen_host] = {
+            "credits": SUPER_CREDIT_START,
+            "last_ping": datetime.utcnow(),
+            "total_uptime_seconds": 0
+        }
+        _ensure_host_queue(chosen_host)
+        logger.info(f"Defensive-created host_data for {chosen_host}")
+
     host_data[chosen_host]["credits"] = host_data[chosen_host].get("credits", 0) + cost
-    logger.info(f"User '{user_id}' charged {cost} credits for job; host '{chosen_host}' credited. User remaining: {user_data[user_id]['credits']} Host credits: {host_data[chosen_host]['credits']}")
+    logger.info(f"User '{user_id}' charged {cost} credits for job; host '{chosen_host}' credited. "
+                f"User remaining: {user_data[user_id]['credits']} Host credits: {host_data[chosen_host]['credits']}")
 
     # Create job metadata
     job_id = str(uuid.uuid4())
     logger.info(f"Received new code submission (user={user_id}), assigned job_id: {job_id}")
     logger.debug(f"Code:\n{payload.code}")
 
-    # If chosen host is supernode -> run locally immediately (existing behavior)
+    # If chosen host is supernode -> run locally immediately
     if chosen_host == SUPERNODE_NAME:
         try:
             tmp = tempfile.NamedTemporaryFile(mode="w+", suffix=".py", delete=False)
@@ -370,6 +405,7 @@ async def submit_code(payload: CodeInput):
 
         logger.info(f"Queued job {job_id} for host {chosen_host}.")
         return {"message": "Job queued for remote host", "job_id": job_id, "charged": cost, "host": chosen_host}
+
 
 # -----------------
 # Host endpoints (stop/status unchanged)
@@ -496,8 +532,8 @@ def run_coord_server():
   ███████║╚██████╔╝██║     ███████╗██║   ██║ ██║ ╚████║███████╗   ██║   
   ╚══════╝ ╚═════╝ ╚═╝     ╚══════╝╚═╝   ╚═╝ ╚═╝  ╚═══╝╚══════╝   ╚═╝   
 
-                       ══► SUPER𝙉𝙀𝙏 v1.0 - Coordinator + Host ◄══                 
-                            ░░░ CREATED BY KXNGSLEY ░░░                            
+                       ══► SUPER𝙉𝙀𝙏 v1.0 (in development) - Coordinator + Host ◄══                 
+                            ░░░ CREATED BY NONSKING2215 ░░░                            
     """)
 
     logger.info("Routes: POST /submit -> returns job_id, POST /stop/{job_id}, GET /status/{job_id}, ws /ws/logs/{job_id}, GET /hosts, GET /get_job/{host_id}, POST /job_done/{job_id}")
