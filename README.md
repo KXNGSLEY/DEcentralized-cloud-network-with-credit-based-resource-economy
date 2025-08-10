@@ -12,5 +12,5 @@ curl "http://YOUR_SERVER_IP:9000/hosts"
 ## to register as host (node)
 curl -X POST "http://YOUR_SERVER_IP:9000/register_host" -H "Content-Type: application/json" -d "{\"host\":\"whatever-hostname-ya-want-lol\"}"
 
-##to host jobs
+## to host jobs
 curl -X POST "http://YOUR_SERVER_IP:9000/submit" -H "Content-Type: application/json" --data "@payload.json"
