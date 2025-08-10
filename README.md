@@ -1,6 +1,6 @@
 # DEcentralized-cloud-network-with-credit-based-resource-economy
-this project is unfinished and in development.....i will finish it.....one day
-u can help if u like lol
+this project is unfinished and in development.....i will finish it.....one day lol....
+u can help if u like
 # How to use
 ## INSTRUCTIONS ON HOW TO USE 
 ## to Run the software(and initiate your system as the supernode)
