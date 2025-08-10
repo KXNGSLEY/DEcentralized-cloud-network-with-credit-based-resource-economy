@@ -14,3 +14,6 @@ curl -X POST "http://YOUR_SERVER_IP:9000/register_host" -H "Content-Type: applic
 
 ## to host jobs
 curl -X POST "http://YOUR_SERVER_IP:9000/submit" -H "Content-Type: application/json" --data "@payload.json"
+
+## to ping a host (node)
+curl -X POST "https://YOUR_SERVER_IP:9000/host_ping" -H "Content-Type: application/json" -d "{\"host\":\"hostname\"}"
