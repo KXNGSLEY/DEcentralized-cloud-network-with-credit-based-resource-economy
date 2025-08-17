@@ -6,11 +6,13 @@ import os
 import tempfile
 import random
 import logging
+import shutil
 from typing import Dict, Any, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 import requests
+import subprocess
 import uvicorn
 
 # -----------------
@@ -61,11 +63,13 @@ SUPERNODE_NAME = "supernode"
 # Models
 # -----------------
 class CodeInput(BaseModel):
-    code: str
+    code: str = ""  # optional, still supports raw code
+    github_url: Optional[str] = ""  # optional: if provided, download & run from repo
+    entrypoint: Optional[str] = ""  # optional: path to run inside repo
     ram: int = 4
     cpu: int = 2
     host: Optional[str] = ""  # optional: if not provided, coordinator will pick
-    user_id: Optional[str] = ""  # optional: who's submitting (non-host users allowed)
+    user_id: Optional[str] = "" # optional: who's submitting (non-host users allowed)
 
 class HostInfo(BaseModel):
     host: str
@@ -337,21 +341,33 @@ async def submit_code(payload: CodeInput):
     # If chosen host is supernode -> run locally immediately
     if chosen_host == SUPERNODE_NAME:
         try:
-            tmp = tempfile.NamedTemporaryFile(mode="w+", suffix=".py", delete=False)
-            tmp.write(payload.code)
-            tmp.flush()
-            tmp.close()
-            logger.debug(f"Code written to temp file: {tmp.name}")
+            work_dir = tempfile.mkdtemp(prefix="supernet_job_")
+            if payload.github_url:
+                logger.info(f"Cloning GitHub repo: {payload.github_url}")
+                subprocess.run(
+                    ["git", "clone", "--depth", "1", payload.github_url, work_dir],
+                    check=True
+                )
+                entry_script = payload.entrypoint or "main.py"
+                entry_path = os.path.join(work_dir, entry_script)
+                if not os.path.exists(entry_path):
+                    raise FileNotFoundError(f"Entrypoint {entry_script} not found in repo")
+            else:
+                # Raw code path (old behavior)
+                entry_path = os.path.join(work_dir, "job.py")
+                with open(entry_path, "w", encoding="utf-8") as f:
+                    f.write(payload.code)
 
             stdout_q: asyncio.Queue = asyncio.Queue()
             stderr_q: asyncio.Queue = asyncio.Queue()
 
             process = await asyncio.create_subprocess_exec(
-                sys.executable, tmp.name,
+                sys.executable, entry_path,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                cwd=work_dir  # run inside cloned repo / temp dir
             )
-            logger.info(f"Launched subprocess for job {job_id} on supernode, PID: {process.pid}")
+            logger.info(f"Launched job {job_id} on supernode from path: {entry_path}")
 
             task_stdout = asyncio.create_task(_read_stream(process.stdout, stdout_q, "stdout", job_id))
             task_stderr = asyncio.create_task(_read_stream(process.stderr, stderr_q, "stderr", job_id))
@@ -364,16 +380,24 @@ async def submit_code(payload: CodeInput):
                 "task_stdout": task_stdout,
                 "task_stderr": task_stderr,
                 "task_wait": task_wait,
-                "job_file": tmp.name,
+                "job_file": entry_path,
                 "returncode": None,
                 "host": chosen_host,
                 "user_id": user_id,
-                "status": "running"
+                "status": "running",
+                "work_dir": work_dir
             }
 
-            return {"message": "Job started on supernode", "job_id": job_id, "pid": process.pid, "charged": cost, "host": chosen_host}
+            return {
+                "message": "Job started on supernode",
+                "job_id": job_id,
+                "pid": process.pid,
+                "charged": cost,
+                "host": chosen_host
+            }
+
         except Exception as e:
-            logger.error(f"Failed to start local job: {e}")
+            logger.error(f"Failed to start job: {e}")
             return {"error": str(e)}
     else:
         # assign job to host queue for remote worker to pick up
@@ -405,7 +429,6 @@ async def submit_code(payload: CodeInput):
 
         logger.info(f"Queued job {job_id} for host {chosen_host}.")
         return {"message": "Job queued for remote host", "job_id": job_id, "charged": cost, "host": chosen_host}
-
 
 # -----------------
 # Host endpoints (stop/status unchanged)
@@ -532,7 +555,7 @@ def run_coord_server():
   ███████║╚██████╔╝██║     ███████╗██║   ██║ ██║ ╚████║███████╗   ██║   
   ╚══════╝ ╚═════╝ ╚═╝     ╚══════╝╚═╝   ╚═╝ ╚═╝  ╚═══╝╚══════╝   ╚═╝   
 
-                       ══► SUPER𝙉𝙀𝙏 v1.0 (in development) - Coordinator + Host ◄══                 
+                       ══► SUPER𝙉𝙀𝙏 v1.1 - Coordinator + Host ◄══                 
                             ░░░ CREATED BY KXNGSLEY ░░░                            
     """)
 
