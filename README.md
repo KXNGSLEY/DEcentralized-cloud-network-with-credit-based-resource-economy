@@ -15,5 +15,9 @@ curl -X POST "http://YOUR_SERVER_IP:9000/register_host" -H "Content-Type: applic
 ## to host jobs
 curl -X POST "http://YOUR_SERVER_IP:9000/submit" -H "Content-Type: application/json" --data "@payload.json"
 
+## to host job from github
+curl -X POST "http://YOUR_SERVER_IP:9000/submit" -H "Content-Type: application/json" -d "{\"github_url\":\"https://github.com/username/repo\",\"entrypoint\":\"main.py\",\"user_id\":\"kxngsley\"}"
+
+
 ## to ping a host (node)
 curl -X POST "https://YOUR_SERVER_IP:9000/host_ping" -H "Content-Type: application/json" -d "{\"host\":\"hostname\"}"
